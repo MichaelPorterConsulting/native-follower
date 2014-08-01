@@ -1,0 +1,23 @@
+<phpunit bootstrap="./test/bootstrap.php" colors="true" backupGlobals="false">
+    <testsuites>
+        <testsuite name="utpid">
+            <directory>test/tests</directory>
+        </testsuite>
+    </testsuites>
+
+    <php>
+        <env name="DB_NAME" value="native_follower_test" />
+        <env name="DB_HOST" value="127.0.0.1" />
+        <env name="DB_PORT" value="3306" />
+        <env name="DB_USER" value="root" />
+        <env name="DB_PASSWORD" value="" />
+
+
+        <env name="BTCD_RPC_HOST" value="127.0.0.1" />
+        <env name="BTCD_RPC_PORT" value="8332" />
+        <env name="BTCD_RPC_USER" value="rpcuser" />
+        <env name="BTCD_RPC_PASSWORD" value="rpcpassword" />
+
+    </php>
+
+</phpunit>
