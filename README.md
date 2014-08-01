@@ -1,6 +1,6 @@
-A Bitcoin block and transaction follower. 
+A Bitcoin block and transaction follower. This is a standalone component of UTipdMe.
 
-This is a standalone component of UTipdMe.
+[![Build Status](https://travis-ci.org/UTipdMe/native-follower.svg?branch=master)](https://travis-ci.org/UTipdMe/native-follower)
 
 
 Here's a sample
