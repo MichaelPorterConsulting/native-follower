@@ -24,8 +24,8 @@ class FollowerSetup
 
 
     public function initializeAndEraseDatabase() {
-        $this->InitializeDatabase();
         $this->eraseDatabase();
+        $this->InitializeDatabase();
     }
 
     public function eraseDatabase() {
@@ -39,7 +39,7 @@ class FollowerSetup
         ////////////////////////////////////////////////////////////////////////
         // blocks
 
-        $this->exec("TRUNCATE TABLE `blocks`;");
+        $this->exec("DROP TABLE IF EXISTS `blocks`;");
 
     } 
 

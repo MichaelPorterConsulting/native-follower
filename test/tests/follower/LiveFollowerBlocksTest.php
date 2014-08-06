@@ -17,7 +17,7 @@ class LiveFollowerBlocksTest extends \PHPUnit_Framework_TestCase
 
 
     public function testLiveProcessBlocks() {
-        $this->markTestIncomplete();
+        if (getenv('NATIVE_RUN_LIVE_TEST') == false) { $this->markTestIncomplete(); }
 
         $this->getFollowerSetup()->initializeAndEraseDatabase();
 
@@ -78,10 +78,10 @@ class LiveFollowerBlocksTest extends \PHPUnit_Framework_TestCase
 
     protected function getBitcoinClient() {
         if (!isset($this->bitcoin_client)) {
-            $host         = getenv('BTCD_RPC_HOST') ?: 'localhost';
-            $port         = getenv('BTCD_RPC_PORT') ?: '8333';
-            $rpc_user     = getenv('BTCD_RPC_USER') ?: null;
-            $rpc_password = getenv('BTCD_RPC_PASSWORD') ?: null;
+            $host         = getenv('NATIVE_RPC_HOST') ?: 'localhost';
+            $port         = getenv('NATIVE_RPC_PORT') ?: '8333';
+            $rpc_user     = getenv('NATIVE_RPC_USER') ?: null;
+            $rpc_password = getenv('NATIVE_RPC_PASSWORD') ?: null;
 
             $connection_string = "http://{$rpc_user}:{$rpc_password}@{$host}:{$port}";
             // https://username:password@localhost:18332

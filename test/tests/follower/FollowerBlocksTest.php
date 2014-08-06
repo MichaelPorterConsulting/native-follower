@@ -1,5 +1,7 @@
 <?php
 
+use GuzzleHttp\Message\Response;
+use GuzzleHttp\Stream\Stream;
 use Utipd\NativeFollower\Follower;
 use Utipd\NativeFollower\FollowerSetup;
 use Utipd\NativeFollower\Mocks\MockClient;
@@ -29,7 +31,7 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         PHPUnit::assertArrayHasKey("A00001", $found_tx_map);
         PHPUnit::assertArrayHasKey("B00001", $found_tx_map);
         PHPUnit::assertArrayHasKey("D00002", $found_tx_map);
-        PHPUnit::assertEquals(0.44, $found_tx_map['A00001']['outputs'][0]['amount']);
+        PHPUnit::assertEquals(56860000, $found_tx_map['A00001']['outputs'][0]['amount']);
     }
 
     public function testHandleOrphanBlocks() {
@@ -88,6 +90,33 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
 
     }    
 
+    protected function getMockGuzzleClient() {
+        if (!isset($this->mock_guzzle_client)) {
+
+            $guzzle = $this->getMockBuilder('\GuzzleHttp\Client')
+                     ->disableOriginalConstructor()
+                     ->getMock();
+
+
+            // Configure the stub.
+            $guzzle->method('get')->will($this->returnCallback(function($url) {
+                $hash = array_slice(explode('/', $url), -1)[0];
+
+                foreach ($this->getSampleBlocks() as $sample_block) {
+                    if ($sample_block['hash'] == $hash) {
+                        $sample_block = $this->applyTransactionsToSampleBlock($sample_block);
+                        return new Response(200, ['Content-Type' => 'application/json'], Stream::factory(json_encode($sample_block)));
+                    }
+                }
+
+                throw new Exception("sample block not found with hash $hash", 1);
+            }));
+
+            $this->mock_guzzle_client = $guzzle;
+        }
+        return $this->mock_guzzle_client;
+    }
+
     protected function setupBTCDMockClientForOrphan($block_id_to_orphan) {
         $this->using_reorg_chain = false;
 
@@ -115,7 +144,7 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         list($db_connection_string, $db_user, $db_password) = $this->buildConnectionInfo();
         $pdo = new \PDO($db_connection_string, $db_user, $db_password);
         $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
-        $follower = new Follower($this->getMockBTCDClient(), $pdo);
+        $follower = new Follower($this->getMockBTCDClient(), $pdo, $this->getMockGuzzleClient());
         $follower->setGenesisBlockID(310000);
         return $follower;
     }
@@ -155,11 +184,21 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         return $this->bitcoin_client;
     }
 
+    protected function applyTransactionsToSampleBlock($block) {
+        $sample_transactions = $this->getSampleTransactionsForBlockchainInfo();
+        $out = $block;
+        $out['tx'] = [];
+        foreach($block['tx'] as $tx_id) {
+            $out['tx'][] = $sample_transactions[$tx_id];
+        }
+        return $out;
+    }
+
     protected function getSampleBlocks() {
         return [
             "310000" => [
-                "previousblockhash" => "000000000000000000000000000000000000000000000000000000000000G099",
-                "hash"              => "000000000000000000000000000000000000000000000000000000000000A100",
+                "previousblockhash" => "BLK_NORM_G099",
+                "hash"              => "BLK_NORM_A100",
                 "tx" => [
                     "A00001",
                     "A00002",
@@ -167,8 +206,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             ],
             "310001" => [
 
-                "previousblockhash" => "000000000000000000000000000000000000000000000000000000000000A100",
-                "hash"              => "000000000000000000000000000000000000000000000000000000000000B101",
+                "previousblockhash" => "BLK_NORM_A100",
+                "hash"              => "BLK_NORM_B101",
                 "tx" => [
                     "B00001",
                     "B00002",
@@ -176,8 +215,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             ],
             "310002" => [
 
-                "previousblockhash" => "000000000000000000000000000000000000000000000000000000000000B101",
-                "hash"              => "000000000000000000000000000000000000000000000000000000000000C102",
+                "previousblockhash" => "BLK_NORM_B101",
+                "hash"              => "BLK_NORM_C102",
                 "tx" => [
                     "C00001",
                     "C00002",
@@ -185,8 +224,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             ],
             "310003" => [
 
-                "previousblockhash" => "000000000000000000000000000000000000000000000000000000000000C102",
-                "hash"              => "000000000000000000000000000000000000000000000000000000000000D103",
+                "previousblockhash" => "BLK_NORM_C102",
+                "hash"              => "BLK_NORM_D103",
                 "tx" => [
                     "D00001",
                     "D00002",
@@ -198,8 +237,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
     protected function getSampleBlocksForReorganizedChain() {
         return [
             "310000" => [
-                "previousblockhash" => "000000000000000000000000000000000000000000000000000000000000G099",
-                "hash"              => "000000000000000000000000000000000000000000000000000000000000A100",
+                "previousblockhash" => "BLK_NORM_G099",
+                "hash"              => "BLK_NORM_A100",
                 "tx" => [
                     "A00001",
                     "A00002",
@@ -207,8 +246,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             ],
             "310001" => [
 
-                "previousblockhash" => "000000000000000000000000000000000000000000000000000000000000A100",
-                "hash"              => "00000000000000000000000000000000000000000000000000000000ORPHB101",
+                "previousblockhash" => "BLK_NORM_A100",
+                "hash"              => "BLK_ORPH_B101",
                 "tx" => [
                     "B00001",
                     "B00002",
@@ -216,8 +255,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             ],
             "310002" => [
 
-                "previousblockhash" => "00000000000000000000000000000000000000000000000000000000ORPHB101",
-                "hash"              => "00000000000000000000000000000000000000000000000000000000ORPHC102",
+                "previousblockhash" => "BLK_ORPH_B101",
+                "hash"              => "BLK_ORPH_C102",
                 "tx" => [
                     "C00001",
                     "C00002",
@@ -225,8 +264,8 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             ],
             "310003" => [
 
-                "previousblockhash" => "00000000000000000000000000000000000000000000000000000000ORPHC102",
-                "hash"              => "00000000000000000000000000000000000000000000000000000000ORPHD103",
+                "previousblockhash" => "BLK_ORPH_C102",
+                "hash"              => "BLK_ORPH_D103",
                 "tx" => [
                     "D00001",
                     "D00002",
@@ -235,99 +274,95 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         ];
     }
 
-    protected function getSampleTransactions() {
+    protected function getSampleTransactionsForBlockchainInfo() {
         
         if (!isset($this->sample_txs)) {
         $samples =  [
             // ################################################################################################
             "A00001" => json_decode($_j = <<<EOT
 {
-    "txid": "A00001",
-    "version": 1,
-    "locktime": 0,
-    "vin": [
+    "hash": "A00001",
+    "inputs": [
         {
-            "txid": "cf5b7548f7ee8a92acd672b47bb3603e35155c5cf4d256fd7c3a77ebc25bfe4e",
-            "vout": 1,
-            "sequence": 4294967295
-        },
-        {
-            "txid": "837f2091e056cb8d26361d66d948a76484855328e62ffadee0a9b1f40913fc9c",
-            "vout": 1,
-            "sequence": 4294967295
+            "prev_out": {
+                "addr": "1J4gVXjd1CT2NnGFkmzaJJvNu4GVUfYLVK",
+                "n": 1,
+                "script": "76a914bb2c5a35cc23ad967773b6734ce956b8ded8cf2388ac",
+                "tx_index": 22961584,
+                "type": 0,
+                "value": 56870000
+            },
+            "script": "76a914bb2c5a35cc23ad967773b6734ce956b8ded8cf2388ac"
         }
     ],
-    "vout": [
+    "out": [
         {
-            "value": 0.44,
+            "addr": "15jhGQfARmEuh8JY73QwrgxYCGhqWAMkAC",
             "n": 0,
-            "scriptPubKey": {
-                "reqSigs": 1,
-                "addresses": [
-                    "18oRp8fdDarJunNHkbtSAsNyV6FJ1ik5fQ"
-                ]
-            }
-        },
-        {
-            "value": 0.01644635,
-            "n": 1,
-            "scriptPubKey": {
-                "reqSigs": 1,
-                "addresses": [
-                    "15jnNY6XaX2jiRzLDmWoyYczQeYDLxMr4r"
-                ]
-            }
+            "script": "210231a3996818ce0d955279421e4f0c4bd07502b9c03c135409e3189c0e067cbb9bac",
+            "spent": false,
+            "tx_index": 24736715,
+            "type": 0,
+            "value": 56860000
         }
-    ]
+    ],
+    "relayed_by": "24.210.191.129",
+    "size": 203,
+    "time": 1376370366,
+    "tx_index": 24736715,
+    "ver": 1,
+    "vin_sz": 1,
+    "vout_sz": 1
 }
+
 EOT
             ),
             // ################################################################################################
             "A00002" => json_decode($_j = <<<EOT
-
 {
-    "txid": "A00002",
-    "version": 1,
-    "locktime": 0,
-    "vin": [
+    "hash": "A00002",
+    "inputs": [
         {
-            "txid": "4251a18aafc8294003908e0e3dfb723d2c361b0d1a9a439d47cd319a90d33462",
-            "vout": 1,
-            "scriptSig": {
-                "asm": "3046022100ae0a64194349b42cb25200195bdce6e0a04db6aae93f6d76062d610aa782af67022100e732118d54f7ded4e40aaf7f637374dc2e8ffc8f06c347ee8d8aadb1f143ad1f01 021040c3a70436d2310843a9a9571fde14b3ef4518a6b6b18d317bd132a1530d63",
-                "hex": "493046022100ae0a64194349b42cb25200195bdce6e0a04db6aae93f6d76062d610aa782af67022100e732118d54f7ded4e40aaf7f637374dc2e8ffc8f06c347ee8d8aadb1f143ad1f0121021040c3a70436d2310843a9a9571fde14b3ef4518a6b6b18d317bd132a1530d63"
+            "prev_out": {
+                "addr": "14nJzbZHueWg5VHa4bDFQ2yxx4pbCDaEvL",
+                "n": 116,
+                "script": "76a914297a1d8ea54f8ef26f524597a187a83c708cf07f88ac",
+                "tx_index": 26175189,
+                "type": 0,
+                "value": 880
             },
-            "sequence": 4294967295
-        }
-    ],
-  "vout": [
-        {
-            "value": 0.22696,
-            "n": 0,
-            "scriptPubKey": {
-                "asm": "OP_DUP OP_HASH160 c33cf3626792c2d75c7237d11f0293f7a0e02211 OP_EQUALVERIFY OP_CHECKSIG",
-                "hex": "76a914c33cf3626792c2d75c7237d11f0293f7a0e0221188ac",
-                "reqSigs": 1,
-                "type": "pubkeyhash",
-                "addresses": [
-                    "1JoKnLZQmnTwiHfqJpXvfpNSiK8xsdHFwi"
-                ]
-            }
+            "script": "76a914297a1d8ea54f8ef26f524597a187a83c708cf07f88ac"
         },
         {
-            "value": 4.16644802,
-            "n": 1,
-            "scriptPubKey": {
-                "asm": "OP_DUP OP_HASH160 bc56e406a60551a01456e86ac0cabd4c6122633d OP_EQUALVERIFY OP_CHECKSIG",
-                "hex": "76a914bc56e406a60551a01456e86ac0cabd4c6122633d88ac",
-                "reqSigs": 1,
-                "type": "pubkeyhash",
-                "addresses": [
-                    "1JAr8LaoFuqv8WTiX6t2tMP9PjFUUAHoSL"
-                ]
-            }
+            "prev_out": {
+                "addr": "14nJzbZHueWg5VHa4bDFQ2yxx4pbCDaEvL",
+                "n": 0,
+                "script": "76a914297a1d8ea54f8ef26f524597a187a83c708cf07f88ac",
+                "tx_index": 27968848,
+                "type": 0,
+                "value": 59000000
+            },
+            "script": "76a914297a1d8ea54f8ef26f524597a187a83c708cf07f88ac"
         }
-    ]
+    ],
+    "out": [
+        {
+            "addr": "1AEwxRGP4HdwrwoXo1rEKc3jihFmZUybCw",
+            "n": 0,
+            "script": "2102f4e9b26c2e0e86761e411e03ffd7b15b8ca4dbea464fb8a4a5dab4220e602c64ac",
+            "spent": true,
+            "tx_index": 30536227,
+            "type": 0,
+            "value": 58990880
+        }
+    ],
+    "relayed_by": "85.17.239.32",
+    "size": 349,
+    "time": 1376370307,
+    "tx_index": 30536227,
+    "ver": 1,
+    "vin_sz": 2,
+    "vout_sz": 1
 }
 
 
@@ -339,12 +374,12 @@ EOT
             // copy to 
             foreach (['B00001','B00002','C00001','C00002','D00001','D00002','BORPH1','BORPH2','CORPH1','CORPH2','DORPH1','DORPH2',] as $new_id) {
                 $samples[$new_id] = clone $samples["A0000".substr($new_id, -1)];
-                $samples[$new_id]->txid = $new_id;
+                $samples[$new_id]->hash = $new_id;
             }
             $this->sample_txs = $samples;
         }
 
         return $this->sample_txs;
-    } 
+    }
 
 }

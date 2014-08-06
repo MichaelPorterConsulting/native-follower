@@ -3,6 +3,7 @@
 namespace Utipd\NativeFollower;
 
 use Nbobtc\Bitcoind\Bitcoind;
+use GuzzleHttp\Client as GuzzleClient;
 use PDO;
 
 /**
@@ -11,31 +12,42 @@ use PDO;
 class Follower
 {
 
-    protected $db_connection = null;
-    protected $new_block_callback_fn = null;
-    protected $new_transaction_callback = null;
+    protected $db_connection              = null;
+    protected $new_block_callback_fn      = null;
+    protected $new_transaction_callback   = null;
     protected $orphaned_block_callback_fn = null;
     
     // no blocks before this are ever seen
-    protected $genesis_block_id = 313364;
+    protected $genesis_block_id = 314170;
 
-    function __construct(Bitcoind $bitcoin_client, PDO $db_connection) {
+    function __construct(Bitcoind $bitcoin_client, PDO $db_connection, GuzzleClient $guzzle=null) {
         $this->bitcoin_client = $bitcoin_client;
         $this->db_connection = $db_connection;
+        $this->guzzle = $guzzle;
     }
 
     public function setGenesisBlockID($genesis_block_id) {
         $this->genesis_block_id = $genesis_block_id;
     }
 
+    // $follower->handleNewBlock(function($block_id) { });
     public function handleNewBlock(Callable $new_block_callback_fn) {
         $this->new_block_callback_fn = $new_block_callback_fn;
     }
+
+    // $follower->handleNewTransaction(function($transaction, $block_id) { });
+
+    // Transactions look like
+    // txid: cc91db2f18b908903cb7c7a4474695016e12afd816f66a209e80b7511b29bba9
+    // outputs:
+    //     - amount: 100000
+    //       address: 1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
     public function handleNewTransaction(Callable $new_transaction_callback) {
         $this->new_transaction_callback = $new_transaction_callback;
     }
 
+    // $follower->handleOrphanedBlock(function($orphaned_block_id) { });
     public function handleOrphanedBlock(Callable $orphaned_block_callback_fn) {
         $this->orphaned_block_callback_fn = $orphaned_block_callback_fn;
     }
@@ -77,44 +89,70 @@ class Follower
         // process the block
         $this->processNewBlockCallback($block_id);
 
-        // process block data
-        if ($block->tx) {
-            $debug_counter = 0;
-            foreach($block->tx as $tx_id) {
-                $raw_tx = $this->bitcoin_client->getrawtransaction($tx_id);
-                $decoded_tx = $this->bitcoin_client->decoderawtransaction($raw_tx);
-                $this->processNewTransactionCallback($this->preprocessDecodedTransaction($decoded_tx), $block_id);
+        // process block data (uses blockchain.info)
+        if ($this->new_transaction_callback !== null) {
+            // https://blockchain.info/rawblock/00000000000000002dbf1f57004289a5489ff009a9e20da402ad5336976933ba
+            if (isset($this->guzzle)) {
+                $client = $this->guzzle;
+            } else {
+                $client = new GuzzleClient(['base_url' => 'https://blockchain.info',]);
+            }
+            $response = $client->get('/rawblock/'.$block->hash);
+            $json_data = $response->json();
 
-                // DEBUG
-                // echo "\$block_id=$block_id count: $debug_counter\n"; if (++$debug_counter >= 5) break;
+            if ($json_data['tx']) {
+                $debug_counter = 0;
+                foreach($json_data['tx'] as $decoded_tx) {
+                    $this->processNewTransactionCallback($this->preprocessDecodedTransactionForBlockchainInfo($decoded_tx), $block_id);
+
+                    // DEBUG
+                    // echo "\$block_id=$block_id count: $debug_counter\n"; if (++$debug_counter >= 5) break;
+                }
             }
         }
+
+        // // process block data (native)
+        // if ($this->new_transaction_callback !== null) {
+        //     if ($block->tx) {
+        //         $debug_counter = 0;
+        //         foreach($block->tx as $tx_id) {
+        //             $raw_tx = $this->bitcoin_client->getrawtransaction($tx_id);
+        //             $decoded_tx = $this->bitcoin_client->decoderawtransaction($raw_tx);
+        //             $this->processNewTransactionCallback($this->preprocessBitcoindDecodedTransaction($decoded_tx), $block_id);
+
+        //             // DEBUG
+        //             // echo "\$block_id=$block_id count: $debug_counter\n"; if (++$debug_counter >= 5) break;
+        //         }
+        //     }
+        // }
 
         return $block;
     }
 
-    protected function preprocessDecodedTransaction($decoded_tx) {
-        $info = ['txid' => $decoded_tx->txid, 'outputs' => []];
-        foreach ($decoded_tx->vout as $vout) {
-            $addresses = $vout->scriptPubKey->addresses;
+    // protected function preprocessBitcoindDecodedTransaction($decoded_tx) {
+    //     $info = ['txid' => $decoded_tx->txid, 'outputs' => []];
+    //     foreach ($decoded_tx->vout as $vout) {
+    //         $addresses = $vout->scriptPubKey->addresses;
+    //         $info['outputs'][] = [
+    //             'amount' => $vout->value,
+    //             'address' => $addresses[0],
+    //         ];
+    //     }
+    //     return $info;
+    // }
+
+
+    protected function preprocessDecodedTransactionForBlockchainInfo($decoded_tx) {
+        $info = ['txid' => $decoded_tx['hash'], 'outputs' => []];
+        foreach ($decoded_tx['out'] as $out) {
+            if (!isset($out['addr'])) { continue; }
             $info['outputs'][] = [
-                'amount' => $vout->value,
-                'addresses' => $addresses,
+                'amount'  => $out['value'],
+                'address' => $out['addr'],
             ];
         }
 
         // lookup source addresses? we don't care about this yet...
-        // "vin": [
-        //     {
-        //         "txid": "cc91db2f18b908903cb7c7a4474695016e12afd816f66a209e80b7511b29bba9",
-        //         "vout": 0,
-        //         "scriptSig": {
-        //             "asm": "3044022011b748725510524d3be6327a0b2403470f19f262e02c358d7de28eb9899c3ea402200d81c919b92fd1b8d98197f06e8b15c2351e4c6a53c694084466fe6a1b77ba9701 02d056c337702b04fb4f3e4ec6d316b3482a1062ddbee07dcac31faea287516c4f",
-        //             "hex": "473044022011b748725510524d3be6327a0b2403470f19f262e02c358d7de28eb9899c3ea402200d81c919b92fd1b8d98197f06e8b15c2351e4c6a53c694084466fe6a1b77ba97012102d056c337702b04fb4f3e4ec6d316b3482a1062ddbee07dcac31faea287516c4f"
-        //         },
-        //         "sequence": 4294967295
-        //     },
-
 
         return $info;
     }
@@ -186,7 +224,7 @@ class Follower
 
             // check the parent db entry
             $db_block_row = $this->getBlockRowFromDB($working_block_id - 1);
-            $parent_hash_in_db = $db_block_row['blockHash'];
+            $parent_hash_in_db = trim($db_block_row['blockHash']);
 
             if ($parent_hash_in_db === $expected_hash) {
                 // this block was not orphaned

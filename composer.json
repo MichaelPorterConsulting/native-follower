@@ -14,7 +14,8 @@
     "require": {
         "php": ">=5.4.0",
         "ext-pdo": "*",
-        "nbobtc/bitcoind-php": "dev-master"
+        "nbobtc/bitcoind-php": "dev-master",
+        "guzzlehttp/guzzle": "~4"
     },
     "require-dev": {
         "phpunit/phpunit": "~4"
