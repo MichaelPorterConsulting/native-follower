@@ -52,14 +52,19 @@ class Follower
         $this->orphaned_block_callback_fn = $orphaned_block_callback_fn;
     }
 
-    public function processAnyNewBlocks() {
+    public function processAnyNewBlocks($limit=null) {
         $last_block = $this->getLastProcessedBlock();
         if ($last_block === null) { $last_block = $this->genesis_block_id - 1; }
 
-        $this->processBlocksNewerThan($last_block);
+        $this->processBlocksNewerThan($last_block, $limit);
     }
 
-    public function processBlocksNewerThan($last_processed_block) {
+
+    public function processOneNewBlock() {
+        return $this->processAnyNewBlocks(1);
+    }
+
+    public function processBlocksNewerThan($last_processed_block, $limit=null) {
         $next_block_id = $last_processed_block + 1;
 
         // $bitcoin_block_height = $this->getBitcoinBlockHeight();
@@ -67,6 +72,7 @@ class Follower
         if (!$bitcoind_block_height) { throw new Exception("Could not get bitcoind block height.  Last result was:".json_encode($this->last_result, 192), 1); }
 
 
+        $processed_count = 0;
         while ($next_block_id <= $bitcoind_block_height) {
             // handle chain reorganization
             list($next_block_id, $block) = $this->loadBlockAndHandleOrphans($next_block_id);
@@ -76,6 +82,12 @@ class Follower
 
             // mark the block as processed
             $this->markBlockAsProcessed($next_block_id, $block);
+
+            // check for limit
+            ++$processed_count;
+            if ($limit !== null) {
+                if ($processed_count >= $limit) { break; }
+            }
 
             ++$next_block_id;
             if ($next_block_id > $bitcoind_block_height) {
