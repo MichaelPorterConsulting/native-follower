@@ -2,8 +2,8 @@
 
 namespace Utipd\NativeFollower;
 
-use Nbobtc\Bitcoind\Bitcoind;
 use GuzzleHttp\Client as GuzzleClient;
+use Nbobtc\Bitcoind\Bitcoind;
 use PDO;
 
 /**
@@ -72,7 +72,6 @@ class Follower
         if (!$bitcoind_block_height) { throw new Exception("Could not get bitcoind block height.  Last result was:".json_encode($this->last_result, 192), 1); }
 
 
-        $last_block_processed = 0;
         $processed_count = 0;
         while ($next_block_id <= $bitcoind_block_height) {
             // handle chain reorganization
@@ -83,7 +82,7 @@ class Follower
 
             // mark the block as processed
             $this->markBlockAsProcessed($next_block_id, $block);
-            $last_block_processed = $next_block_id;
+            $last_processed_block = $next_block_id;
 
             // clear mempool, because a new block was processed
             $this->clearMempool();
@@ -102,7 +101,7 @@ class Follower
         }
 
         // if we are caught up, process mempool transactions
-        if ($last_block_processed == $bitcoind_block_height) {
+        if ($last_processed_block == $bitcoind_block_height) {
             $this->processMempoolTransactions();
         }
 
