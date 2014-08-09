@@ -26,7 +26,7 @@ class Follower
         $this->guzzle = $guzzle;
     }
 
-    public function setGenesisBlockID($genesis_block_id) {
+    public function setGenesisBlock($genesis_block_id) {
         $this->genesis_block_id = $genesis_block_id;
     }
 
@@ -72,6 +72,7 @@ class Follower
         if (!$bitcoind_block_height) { throw new Exception("Could not get bitcoind block height.  Last result was:".json_encode($this->last_result, 192), 1); }
 
 
+        $last_block_processed = 0;
         $processed_count = 0;
         while ($next_block_id <= $bitcoind_block_height) {
             // handle chain reorganization
@@ -82,19 +83,29 @@ class Follower
 
             // mark the block as processed
             $this->markBlockAsProcessed($next_block_id, $block);
+            $last_block_processed = $next_block_id;
 
-            // check for limit
-            ++$processed_count;
-            if ($limit !== null) {
-                if ($processed_count >= $limit) { break; }
-            }
+            // clear mempool, because a new block was processed
+            $this->clearMempool();
 
             ++$next_block_id;
             if ($next_block_id > $bitcoind_block_height) {
                 // reload the bitcoin block height in case this took a long time
                 $bitcoind_block_height = $this->getBitcoinBlockHeight();
             }
+
+            // check for limit
+            ++$processed_count;
+            if ($limit !== null) {
+                if ($processed_count >= $limit) { break; }
+            }
         }
+
+        // if we are caught up, process mempool transactions
+        if ($last_block_processed == $bitcoind_block_height) {
+            $this->processMempoolTransactions();
+        }
+
     }
 
     public function processBlock($block_id, $block) {
@@ -115,7 +126,7 @@ class Follower
             if ($json_data['tx']) {
                 $debug_counter = 0;
                 foreach($json_data['tx'] as $decoded_tx) {
-                    $this->processNewTransactionCallback($this->preprocessDecodedTransactionForBlockchainInfo($decoded_tx), $block_id);
+                    $this->processNewTransactionCallback($this->preprocessDecodedTransactionForBlockchainInfo($decoded_tx), $block_id, $is_mempool=false);
 
                     // DEBUG
                     // echo "\$block_id=$block_id count: $debug_counter\n"; if (++$debug_counter >= 5) break;
@@ -141,18 +152,6 @@ class Follower
         return $block;
     }
 
-    // protected function preprocessBitcoindDecodedTransaction($decoded_tx) {
-    //     $info = ['txid' => $decoded_tx->txid, 'outputs' => []];
-    //     foreach ($decoded_tx->vout as $vout) {
-    //         $addresses = $vout->scriptPubKey->addresses;
-    //         $info['outputs'][] = [
-    //             'amount' => $vout->value,
-    //             'address' => $addresses[0],
-    //         ];
-    //     }
-    //     return $info;
-    // }
-
 
     protected function preprocessDecodedTransactionForBlockchainInfo($decoded_tx) {
         $info = ['txid' => $decoded_tx['hash'], 'outputs' => []];
@@ -176,10 +175,10 @@ class Follower
         }
     }
 
-    protected function processNewTransactionCallback($transaction, $block_id) {
+    protected function processNewTransactionCallback($transaction, $block_id, $is_mempool) {
         // handle the send
         if ($this->new_transaction_callback) {
-            call_user_func($this->new_transaction_callback, $transaction, $block_id);
+            call_user_func($this->new_transaction_callback, $transaction, $block_id, $is_mempool);
         }
     }
 
@@ -277,6 +276,72 @@ class Follower
         $sth = $this->db_connection->prepare($sql);
         $success = $sth->execute([$block_id]);
         return $success;
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////
+    // mempool
+    
+    protected function clearMempool() {
+        $sql = "TRUNCATE mempool";
+        $sth = $this->db_connection->exec($sql);
+    }
+
+    protected function processMempoolTransactions() {
+        // json={"filters": {"field": "category", "op": "==", "value": "sends"}}
+        $mempool_txs = $this->bitcoin_client->getrawmempool();
+
+        // load all processed mempool hashes
+        $mempool_transactions_processed = $this->getAllMempoolTransactionsMap();
+
+        foreach($mempool_txs as $mempool_tx_hash) {
+            // if already processed, skip it
+            if (isset($mempool_transactions_processed[$mempool_tx_hash])) { continue; }
+
+            // decode the bindings attribute
+            if (isset($this->new_transaction_callback)) {
+                $timestamp = time();
+                $decoded_tx = $this->bitcoin_client->getrawtransaction($mempool_tx_hash, true);
+                $mempool_tx = $this->formatDecodedRawTransaction($decoded_tx);
+
+                // send new tx
+                $this->processNewTransactionCallback($mempool_tx, null, $is_mempool=true);
+            }
+
+            // mark as processed
+            $this->markMempoolTransactionAsProcessed($mempool_tx_hash, $timestamp);
+        }
+    }
+
+    protected function formatDecodedRawTransaction($decoded_tx) {
+        $info = ['txid' => $decoded_tx->txid, 'outputs' => []];
+        foreach ($decoded_tx->vout as $vout) {
+            $addresses = $vout->scriptPubKey->addresses;
+            $info['outputs'][] = [
+                // this needs to be in satoshis
+                'amount' => round($vout->value * 100000000),
+                'address' => $addresses[0],
+            ];
+        }
+        return $info;
+    }
+
+
+    protected function getAllMempoolTransactionsMap() {
+        $mempool_transactions_map = [];
+        $sql = "SELECT hash FROM mempool";
+        $sth = $this->db_connection->prepare($sql);
+        $result = $sth->execute();
+        while ($row = $sth->fetch(PDO::FETCH_ASSOC)) {
+            $mempool_transactions_map[$row['hash']] = true;
+        }
+        return $mempool_transactions_map;
+    }
+
+    protected function markMempoolTransactionAsProcessed($hash, $timestamp) {
+        $sql = "REPLACE INTO mempool VALUES (?,?)";
+        $sth = $this->db_connection->prepare($sql);
+        $result = $sth->execute([$hash, $timestamp]);
     }
 
 

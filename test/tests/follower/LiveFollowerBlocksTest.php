@@ -25,7 +25,7 @@ class LiveFollowerBlocksTest extends \PHPUnit_Framework_TestCase
         $client = $this->getBitcoinClient();
         $block_height = $client->getblockcount();
         $follower = $this->getFollower();
-        $follower->setGenesisBlockID($block_height - 1);
+        $follower->setGenesisBlock($block_height - 1);
 
         $found_send_tx_map = [];
         $blocks_seen_count = 0;

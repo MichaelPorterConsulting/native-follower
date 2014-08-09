@@ -54,13 +54,85 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             $found_orphans_map[$orphaned_block_id] = true;
         });
 
-
-
         $follower->processAnyNewBlocks();
 
         PHPUnit::assertArrayHasKey(310001, $found_orphans_map);
         PHPUnit::assertEquals(1, count($found_orphans_map));
     } 
+
+
+
+    public function testMempool() {
+        $this->getFollowerSetup()->initializeAndEraseDatabase();
+        $this->setupBTCDMockClient();
+        $this->setupBTCDMockClientForMempool();
+
+
+        $follower = $this->getFollower();
+        $found_tx_map = ['normal' => [], 'mempool' => []];
+        $mempool_transactions_processed = 0;
+
+        $follower->handleNewTransaction(function($transaction, $block_id, $is_mempool) use (&$found_tx_map, &$mempool_transactions_processed) {
+            if ($is_mempool) {
+                ++$mempool_transactions_processed;
+                $found_tx_map['mempool'][] = $transaction;
+            } else {
+                $found_tx_map['normal'][$transaction['txid']] = $transaction;
+            }
+        });
+
+        // run three times
+        $follower->processAnyNewBlocks(4);
+
+        // check normal transactions
+        // echo "\$found_tx_map:\n".json_encode($found_tx_map, 192)."\n";
+        PHPUnit::assertArrayHasKey("A00001", $found_tx_map['normal']);
+
+
+        // make sure mempool table has two entries
+        $db_connection = $this->getPDO();
+        $sql = "SELECT hash FROM mempool";
+        $sth = $db_connection->prepare($sql);
+        $result = $sth->execute();
+        PHPUnit::assertEquals(2, $sth->rowCount());
+
+
+        $follower->processAnyNewBlocks(1);
+
+
+        // now clear the mempool by processing a new block
+        $this->getMockBTCDClient()->addCallback('getblockcount', function() {
+            return 310004;
+        });
+        $this->getMockBTCDClient()->addCallback('getrawmempool', function() {
+            return [];
+        });
+        $follower->processAnyNewBlocks(1);
+
+        // make sure mempool table is cleared
+        $db_connection = $this->getPDO();
+        $sql = "SELECT hash FROM mempool";
+        $sth = $db_connection->prepare($sql);
+        $result = $sth->execute();
+        PHPUnit::assertEquals(0, $sth->rowCount());
+
+/*
+    {
+        "txid": "rawtxid001",
+        "outputs": [
+            {
+                "amount": 50000000,
+                "address": "1JdDmF3BmAVQP6cJYLhS9JMRqAM3bB1hP4"
+            },
+            {
+                "amount": 2233228,
+                "address": "1C18KJPUfAmsaqTUiJ4VujzMz37MM3W2AJ"
+            }
+        ]
+    },
+*/
+    }
+
 
 
     ////////////////////////////////////////////////////////////////////////
@@ -69,21 +141,27 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         $this->getMockBTCDClient()->addCallback('getblockhash', function($block_id) {
             return $this->getSampleBlocks()[$block_id]['hash'];
         });
-        $this->getMockBTCDClient()->addCallback('getblock', function($block_hash) {
+        $this->getMockBTCDClient()->addCallback('getblock', function($block_hash_params) {
+            list($block_hash, $verbose) = $block_hash_params;
             $blocks = array_merge($this->getSampleBlocks(), $this->getSampleBlocksForReorganizedChain());
             foreach ($blocks as $block) {
                 if ($block['hash'] == $block_hash) { return (object)$block; }
             }
             throw new Exception("Block not found: $block_hash", 1);
         });
-        $this->getMockBTCDClient()->addCallback('getrawtransaction', function($tx_id_info) {
-            $tx_id = $tx_id_info[0];
-            return "RAW:$tx_id";
+        $this->getMockBTCDClient()->addCallback('getrawtransaction', function($tx_id_params) {
+            $tx_id = $tx_id_params[0];
+            return $this->getSampleTransactionsForNative()[$tx_id];
         });
-        $this->getMockBTCDClient()->addCallback('decoderawtransaction', function($raw_tx) {
-            $tx_id = substr($raw_tx, 4);
-            return $this->getSampleTransactions()[$tx_id];
+        // $this->getMockBTCDClient()->addCallback('decoderawtransaction', function($raw_tx) {
+        //     $tx_id = substr($raw_tx, 4);
+        //     return $this->getSampleTransactions()[$tx_id];
+        // });
+
+        $this->getMockBTCDClient()->addCallback('getrawmempool', function() {
+            return [];
         });
+
         $this->getMockBTCDClient()->addCallback('getblockcount', function() {
             return 310003;
         });
@@ -139,13 +217,20 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
 
     }
 
+    protected function setupBTCDMockClientForMempool() {
+        $this->getMockBTCDClient()->addCallback('getrawmempool', function() {
+            return ["rawtxid001","rawtxid002"];
+        });
+
+    }
+
 
     protected function getFollower() {
         list($db_connection_string, $db_user, $db_password) = $this->buildConnectionInfo();
         $pdo = new \PDO($db_connection_string, $db_user, $db_password);
         $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         $follower = new Follower($this->getMockBTCDClient(), $pdo, $this->getMockGuzzleClient());
-        $follower->setGenesisBlockID(310000);
+        $follower->setGenesisBlock(310000);
         return $follower;
     }
 
@@ -154,6 +239,13 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         $pdo = new \PDO($db_connection_string, $db_user, $db_password);
         $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         return new FollowerSetup($pdo, $db_name);
+    }
+
+    protected function getPDO() {
+        list($db_connection_string, $db_user, $db_password, $db_name) = $this->buildConnectionInfo(true);
+        $pdo = new \PDO($db_connection_string, $db_user, $db_password);
+        $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        return $pdo;
     }
 
     protected function buildConnectionInfo($with_db=true) {
@@ -231,6 +323,15 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
                     "D00002",
                 ],
             ],
+            "310004" => [
+
+                "previousblockhash" => "BLK_NORM_D103",
+                "hash"              => "BLK_NORM_E103",
+                "tx" => [
+                    "E00001",
+                    "E00002",
+                ],
+            ],
         ];
     }
 
@@ -288,7 +389,7 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
                 "addr": "1J4gVXjd1CT2NnGFkmzaJJvNu4GVUfYLVK",
                 "n": 1,
                 "script": "76a914bb2c5a35cc23ad967773b6734ce956b8ded8cf2388ac",
-                "tx_index": 22961584,
+                "txid": 22961584,
                 "type": 0,
                 "value": 56870000
             },
@@ -301,7 +402,7 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
             "n": 0,
             "script": "210231a3996818ce0d955279421e4f0c4bd07502b9c03c135409e3189c0e067cbb9bac",
             "spent": false,
-            "tx_index": 24736715,
+            "txid": 24736715,
             "type": 0,
             "value": 56860000
         }
@@ -309,7 +410,7 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
     "relayed_by": "24.210.191.129",
     "size": 203,
     "time": 1376370366,
-    "tx_index": 24736715,
+    "txid": 24736715,
     "ver": 1,
     "vin_sz": 1,
     "vout_sz": 1
@@ -327,7 +428,7 @@ EOT
                 "addr": "14nJzbZHueWg5VHa4bDFQ2yxx4pbCDaEvL",
                 "n": 116,
                 "script": "76a914297a1d8ea54f8ef26f524597a187a83c708cf07f88ac",
-                "tx_index": 26175189,
+                "txid": 26175189,
                 "type": 0,
                 "value": 880
             },
@@ -338,7 +439,7 @@ EOT
                 "addr": "14nJzbZHueWg5VHa4bDFQ2yxx4pbCDaEvL",
                 "n": 0,
                 "script": "76a914297a1d8ea54f8ef26f524597a187a83c708cf07f88ac",
-                "tx_index": 27968848,
+                "txid": 27968848,
                 "type": 0,
                 "value": 59000000
             },
@@ -351,7 +452,7 @@ EOT
             "n": 0,
             "script": "2102f4e9b26c2e0e86761e411e03ffd7b15b8ca4dbea464fb8a4a5dab4220e602c64ac",
             "spent": true,
-            "tx_index": 30536227,
+            "txid": 30536227,
             "type": 0,
             "value": 58990880
         }
@@ -359,7 +460,7 @@ EOT
     "relayed_by": "85.17.239.32",
     "size": 349,
     "time": 1376370307,
-    "tx_index": 30536227,
+    "txid": 30536227,
     "ver": 1,
     "vin_sz": 2,
     "vout_sz": 1
@@ -372,7 +473,7 @@ EOT
         ];
 
             // copy to 
-            foreach (['B00001','B00002','C00001','C00002','D00001','D00002','BORPH1','BORPH2','CORPH1','CORPH2','DORPH1','DORPH2',] as $new_id) {
+            foreach (['B00001','B00002','C00001','C00002','D00001','D00002','E00001','E00002','BORPH1','BORPH2','CORPH1','CORPH2','DORPH1','DORPH2',] as $new_id) {
                 $samples[$new_id] = clone $samples["A0000".substr($new_id, -1)];
                 $samples[$new_id]->hash = $new_id;
             }
@@ -380,6 +481,112 @@ EOT
         }
 
         return $this->sample_txs;
+    }
+
+
+    protected function getSampleTransactionsForNative() {
+        if (!isset($this->native_sample_txs)) {
+            $this->native_sample_txs =  [
+                // ################################################################################################
+                "rawtxid001" => json_decode($_j = <<<EOT
+{
+    "txid": "rawtxid001",
+    "version": 1,
+    "locktime": 0,
+    "vin": [
+        {
+            "txid": "ebbb76c12c4de2207fa482958e1eafa13fcee9ead64a616bdb01e00b37cb52a6",
+            "vout": 1,
+            "scriptSig": {
+                "asm": "3045022074f04cfad743082a16fb0f005ad3ff7311a4fe6f952b267110af6b7e56f0a89c022100a8d3b3075328e2e220cd3abda147b94a97112c4b41dc11227ba669597cb4cc3c01 046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80",
+                "hex": "483045022074f04cfad743082a16fb0f005ad3ff7311a4fe6f952b267110af6b7e56f0a89c022100a8d3b3075328e2e220cd3abda147b94a97112c4b41dc11227ba669597cb4cc3c0141046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80"
+            },
+            "sequence": 4294967295
+        }
+    ],
+    "vout": [
+        {
+            "value": 0.5,
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 c153c44c7e86b4040680bfbda69dc7f6400123ea OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a914c153c44c7e86b4040680bfbda69dc7f6400123ea88ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": [
+                    "1JdDmF3BmAVQP6cJYLhS9JMRqAM3bB1hP4"
+                ]
+            }
+        },
+        {
+            "value": 0.02233228,
+            "n": 1,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 78af7d849c3c4767584502bd22ddf2b642c2eb20 OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a91478af7d849c3c4767584502bd22ddf2b642c2eb2088ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": [
+                    "1C18KJPUfAmsaqTUiJ4VujzMz37MM3W2AJ"
+                ]
+            }
+        }
+    ]
+}
+
+EOT
+            ),
+                "rawtxid002" => json_decode($_j = <<<EOT
+{
+    "txid": "rawtxid002",
+    "version": 1,
+    "locktime": 0,
+    "vin": [
+        {
+            "txid": "ebbb76c12c4de2207fa482958e1eafa13fcee9ead64a616bdb01e00b37cb52a6",
+            "vout": 1,
+            "scriptSig": {
+                "asm": "3045022074f04cfad743082a16fb0f005ad3ff7311a4fe6f952b267110af6b7e56f0a89c022100a8d3b3075328e2e220cd3abda147b94a97112c4b41dc11227ba669597cb4cc3c01 046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80",
+                "hex": "483045022074f04cfad743082a16fb0f005ad3ff7311a4fe6f952b267110af6b7e56f0a89c022100a8d3b3075328e2e220cd3abda147b94a97112c4b41dc11227ba669597cb4cc3c0141046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80"
+            },
+            "sequence": 4294967295
+        }
+    ],
+    "vout": [
+        {
+            "value": 0.6,
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 c153c44c7e86b4040680bfbda69dc7f6400123ea OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a914c153c44c7e86b4040680bfbda69dc7f6400123ea88ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": [
+                    "1JdDmF3BmAVQP6cJYLhS9JMRqAM3bB1hP4"
+                ]
+            }
+        },
+        {
+            "value": 0.08,
+            "n": 1,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 78af7d849c3c4767584502bd22ddf2b642c2eb20 OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a91478af7d849c3c4767584502bd22ddf2b642c2eb2088ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": [
+                    "1C18KJPUfAmsaqTUiJ4VujzMz37MM3W2AJ"
+                ]
+            }
+        }
+    ]
+}
+
+EOT
+                ),
+            ];
+        }
+        return $this->native_sample_txs;
     }
 
 }
