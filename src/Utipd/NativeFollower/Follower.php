@@ -151,6 +151,16 @@ class Follower
         return $block;
     }
 
+    public function getLastProcessedBlock() {
+        $sql = "SELECT MAX(blockId) AS blockId FROM blocks WHERE status=?";
+        $sth = $this->db_connection->prepare($sql);
+        $result = $sth->execute(['processed']);
+        while ($row = $sth->fetch(PDO::FETCH_ASSOC)) {
+            return $row['blockId'];
+        }
+        return null;
+    }
+
 
     protected function preprocessDecodedTransactionForBlockchainInfo($decoded_tx) {
         $info = ['txid' => $decoded_tx['hash'], 'outputs' => []];
@@ -190,16 +200,6 @@ class Follower
     protected function getBitcoinBlockHeight() {
         $this->last_result = $this->bitcoin_client->getblockcount();
         return $this->last_result;
-    }
-
-    protected function getLastProcessedBlock() {
-        $sql = "SELECT MAX(blockId) AS blockId FROM blocks WHERE status=?";
-        $sth = $this->db_connection->prepare($sql);
-        $result = $sth->execute(['processed']);
-        while ($row = $sth->fetch(PDO::FETCH_ASSOC)) {
-            return $row['blockId'];
-        }
-        return null;
     }
 
     protected function markBlockAsProcessed($block_id, $block) {
