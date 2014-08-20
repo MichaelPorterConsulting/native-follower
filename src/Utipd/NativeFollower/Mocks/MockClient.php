@@ -19,6 +19,7 @@ class MockClient extends Bitcoind
     }
     public function addCallback($method, Callable $function) {
         $this->callbacks_map[$method] = $function;
+        return $this;
     }
 
     function __call($method, $arguments) {
