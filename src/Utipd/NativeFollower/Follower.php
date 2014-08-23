@@ -209,7 +209,7 @@ class Follower
 
             // we can't check the parent of the genesis block
             //   because, well, it's the genesis block
-            if ($working_block_id === $this->genesis_block_id) { break; }
+            if ($working_block_id <= $this->genesis_block_id) { break; }
 
             // get the block from bitcoind
             $expected_hash = $block->previousblockhash;
