@@ -126,27 +126,9 @@ class Follower
                 $debug_counter = 0;
                 foreach($json_data['tx'] as $decoded_tx) {
                     $this->processNewTransactionCallback($this->preprocessDecodedTransactionForBlockchainInfo($decoded_tx), $block_id, $is_mempool=false);
-
-                    // DEBUG
-                    // echo "\$block_id=$block_id count: $debug_counter\n"; if (++$debug_counter >= 5) break;
                 }
             }
         }
-
-        // // process block data (native)
-        // if ($this->new_transaction_callback !== null) {
-        //     if ($block->tx) {
-        //         $debug_counter = 0;
-        //         foreach($block->tx as $tx_id) {
-        //             $raw_tx = $this->bitcoin_client->getrawtransaction($tx_id);
-        //             $decoded_tx = $this->bitcoin_client->decoderawtransaction($raw_tx);
-        //             $this->processNewTransactionCallback($this->preprocessBitcoindDecodedTransaction($decoded_tx), $block_id);
-
-        //             // DEBUG
-        //             // echo "\$block_id=$block_id count: $debug_counter\n"; if (++$debug_counter >= 5) break;
-        //         }
-        //     }
-        // }
 
         return $block;
     }
