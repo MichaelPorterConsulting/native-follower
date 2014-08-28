@@ -125,10 +125,17 @@ class Follower
             if ($json_data['tx']) {
                 $debug_counter = 0;
                 foreach($json_data['tx'] as $decoded_tx) {
-                    $this->processNewTransactionCallback($this->preprocessDecodedTransactionForBlockchainInfo($decoded_tx), $block_id, $is_mempool=false);
+                    $hash = $decoded_tx['hash'];
+                    $confirmed_tx = $this->getCachedTransactionOrBuildNewOne($hash, $with_inputs=true, function($hash) use ($decoded_tx) {
+                        return $this->preprocessDecodedTransactionForBlockchainInfo($decoded_tx);
+                    });
+                    $this->processNewTransactionCallback($confirmed_tx, $block_id, $is_mempool=false);
                 }
             }
         }
+
+        // garbage collection on cache
+        $this->cleanCacheTable();
 
         return $block;
     }
@@ -154,7 +161,13 @@ class Follower
             ];
         }
 
-        // lookup source addresses? we don't care about this yet...
+        // build inputs
+        foreach ($decoded_tx['inputs'] as $input) {
+            $info['inputs'][] = [
+                'amount'  => $input['prev_out']['value'],
+                'address' => $input['prev_out']['addr'],
+            ];
+        }
 
         return $info;
     }
@@ -279,11 +292,14 @@ class Follower
             // if already processed, skip it
             if (isset($mempool_transactions_processed[$mempool_tx_hash])) { continue; }
 
-            // decode the bindings attribute
+            // decode the transaction
+            $timestamp = time();
             if (isset($this->new_transaction_callback)) {
-                $timestamp = time();
-                $decoded_tx = $this->bitcoin_client->getrawtransaction($mempool_tx_hash, true);
-                $mempool_tx = $this->formatDecodedRawTransaction($decoded_tx);
+                $mempool_tx = $this->getCachedTransactionOrBuildNewOne($mempool_tx_hash, $with_inputs=true, function($mempool_tx_hash) {
+                    $decoded_tx = $this->bitcoin_client->getrawtransaction($mempool_tx_hash, true);
+                    $mempool_tx = $this->formatDecodedRawTransaction($decoded_tx, true);
+                    return $mempool_tx;
+                });
 
                 // send new tx
                 $this->processNewTransactionCallback($mempool_tx, null, $is_mempool=true);
@@ -294,8 +310,8 @@ class Follower
         }
     }
 
-    protected function formatDecodedRawTransaction($decoded_tx) {
-        $info = ['txid' => $decoded_tx->txid, 'outputs' => []];
+    protected function formatDecodedRawTransaction($decoded_tx, $with_inputs) {
+        $info = ['txid' => $decoded_tx->txid, 'inputs' => [], 'outputs' => []];
         foreach ($decoded_tx->vout as $vout) {
             $addresses = $vout->scriptPubKey->addresses;
             $info['outputs'][] = [
@@ -303,6 +319,14 @@ class Follower
                 'amount' => round($vout->value * 100000000),
                 'address' => $addresses[0],
             ];
+
+            // build inputs (if needed)
+            if ($with_inputs) {
+                foreach ($decoded_tx->vin as $vin) {
+                    $info['inputs'][] = $this->buildInputForPreviousOutput($vin->txid, $vin->vout);
+                }
+            }
+
         }
         return $info;
     }
@@ -325,6 +349,59 @@ class Follower
         $result = $sth->execute([$hash, $timestamp]);
     }
 
+    ////////////////////////////////////////////////////////////////////////
+    // build inputs
+
+    protected function buildInputForPreviousOutput($previous_hash, $vout_offset) {
+        // get the previous transaction
+        $previous_tx = $this->getCachedTransactionOrBuildNewOne($previous_hash, $with_inputs=false, function($previous_hash) {
+            $decoded_tx = $this->bitcoin_client->getrawtransaction($previous_hash, true);
+            return $this->formatDecodedRawTransaction($decoded_tx, $with_inputs=false);
+        });
+
+        // decode the input
+        $previous_output = $previous_tx['outputs'][$vout_offset];
+        return [
+            'amount'  => $previous_output['amount'],
+            'address' => $previous_output['address'],
+        ];
+   
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+    // cache
+
+    protected function getCachedTransactionOrBuildNewOne($hash, $with_inputs, $build_callback) {
+        $with_inputs = ($with_inputs ? 1 : 0);
+
+        // txcache
+        $mempool_transactions_map = [];
+        $sql = "SELECT * FROM txcache WHERE hash = ? AND with_inputs = ?";
+        $sth = $this->db_connection->prepare($sql);
+        $result = $sth->execute([$hash, $with_inputs]);
+        if ($row = $sth->fetch(PDO::FETCH_ASSOC)) {
+            return json_decode($row['tx'], true);
+        }
+
+        // not in cache, so build it
+        $new_transaction = $build_callback($hash);
+
+        // store it
+        $sql = "REPLACE INTO txcache (`hash`, `with_inputs`, `timestamp`, `tx`) VALUES (?,?,?,?)";
+        $sth = $this->db_connection->prepare($sql);
+        $result = $sth->execute([$hash, $with_inputs, time(), json_encode($new_transaction)]);
+
+        // return the new transaction
+        return $new_transaction;
+    }    
+
+    protected function cleanCacheTable() {
+        $TTL = 86400;
+        $timestamp_to_delete = time() - $TTL;
+        $sql = "DELETE FROM txcache WHERE `timestamp` < ?";
+        $sth = $this->db_connection->prepare($sql);
+        $result = $sth->execute([$TTL]);
+    }    
 
 
 

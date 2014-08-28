@@ -32,6 +32,11 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         PHPUnit::assertArrayHasKey("B00001", $found_tx_map);
         PHPUnit::assertArrayHasKey("D00002", $found_tx_map);
         PHPUnit::assertEquals(56860000, $found_tx_map['A00001']['outputs'][0]['amount']);
+
+        // test inputs (Blockchain.info)
+        PHPUnit::assertEquals('1J4gVXjd1CT2NnGFkmzaJJvNu4GVUfYLVK', $found_tx_map['A00001']['inputs'][0]['address']);
+        PHPUnit::assertEquals(56870000, $found_tx_map['A00001']['inputs'][0]['amount']);
+        
     }
 
     public function testHandleOrphanBlocks() {
@@ -88,6 +93,9 @@ class FollowerBlocksTest extends \PHPUnit_Framework_TestCase
         // echo "\$found_tx_map:\n".json_encode($found_tx_map, 192)."\n";
         PHPUnit::assertArrayHasKey("A00001", $found_tx_map['normal']);
 
+        // test inputs (raw bitcoind)
+        PHPUnit::assertEquals('1C18KJPUfAmsaqTUiJ4VujzMz37MM3W2AJ', $found_tx_map['mempool'][0]['inputs'][0]['address']);
+        PHPUnit::assertEquals(90000, $found_tx_map['mempool'][0]['inputs'][0]['amount']); // 0.0009 = 90000
 
         // make sure mempool table has two entries
         $db_connection = $this->getPDO();
@@ -487,6 +495,7 @@ EOT
     protected function getSampleTransactionsForNative() {
         if (!isset($this->native_sample_txs)) {
             $this->native_sample_txs =  [
+                // 1C18KJPUfAmsaqTUiJ4VujzMz37MM3W2AJ
                 // ################################################################################################
                 "rawtxid001" => json_decode($_j = <<<EOT
 {
@@ -536,6 +545,7 @@ EOT
 
 EOT
             ),
+                // ################################################################################
                 "rawtxid002" => json_decode($_j = <<<EOT
 {
     "txid": "rawtxid002",
@@ -582,6 +592,69 @@ EOT
     ]
 }
 
+EOT
+                ),
+                // ################################################################################
+                // # Previous TX
+                "ebbb76c12c4de2207fa482958e1eafa13fcee9ead64a616bdb01e00b37cb52a6" => json_decode($_j = <<<EOT
+{
+    "hex": "01000000023956983b8b83f89fbab7351f0a7b2215898e111f94609d145ea83df9e8aa8697000000008b483045022100e4bdce70fa78362f610eba9c634d2fbfcd840239a0d11bbe9d9fef320d249d7e022037592aa957a639913408421c4896f2881bb97cc91747b6e1aaf421fad3bbe5e00141046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80ffffffffc4464286201abca2421877f8ff5d9c27a168d3fefaca6fab2b5d1e8c0d0a531e000000008b483045022100e78ac9a5e63064980110bd70c8953a8e0033d5ff4415ac12d4f8d10702f79986022078ef90005b93a46b918d8799057d04151bd311752e04dbcd841d4ce49a17c2cb0141046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80ffffffff026011aa02000000001976a9140fdccbddf363a82392193e7ef11fa743e66cc85488ac905f0100000000001976a91478af7d849c3c4767584502bd22ddf2b642c2eb2088ac00000000",
+    "txid": "ebbb76c12c4de2207fa482958e1eafa13fcee9ead64a616bdb01e00b37cb52a6",
+    "version": 1,
+    "locktime": 0,
+    "vin": [
+        {
+            "txid": "9786aae8f93da85e149d60941f118e8915227b0a1f35b7ba9ff8838b3b985639",
+            "vout": 0,
+            "scriptSig": {
+                "asm": "3045022100e4bdce70fa78362f610eba9c634d2fbfcd840239a0d11bbe9d9fef320d249d7e022037592aa957a639913408421c4896f2881bb97cc91747b6e1aaf421fad3bbe5e001 046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80",
+                "hex": "483045022100e4bdce70fa78362f610eba9c634d2fbfcd840239a0d11bbe9d9fef320d249d7e022037592aa957a639913408421c4896f2881bb97cc91747b6e1aaf421fad3bbe5e00141046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80"
+            },
+            "sequence": 4294967295
+        },
+        {
+            "txid": "1e530a0d8c1e5d2bab6fcafafed368a1279c5dfff8771842a2bc1a20864246c4",
+            "vout": 0,
+            "scriptSig": {
+                "asm": "3045022100e78ac9a5e63064980110bd70c8953a8e0033d5ff4415ac12d4f8d10702f79986022078ef90005b93a46b918d8799057d04151bd311752e04dbcd841d4ce49a17c2cb01 046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80",
+                "hex": "483045022100e78ac9a5e63064980110bd70c8953a8e0033d5ff4415ac12d4f8d10702f79986022078ef90005b93a46b918d8799057d04151bd311752e04dbcd841d4ce49a17c2cb0141046af1d67a6b4db50d61bb0e3a4bf855f01d35be157476d04b5942e1b732956457db009ffa621bb8122b53818033f6996b5c63081e24f9770d6d2fe4408e9afc80"
+            },
+            "sequence": 4294967295
+        }
+    ],
+    "vout": [
+        {
+            "value": 0.447,
+            "n": 0,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 0fdccbddf363a82392193e7ef11fa743e66cc854 OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a9140fdccbddf363a82392193e7ef11fa743e66cc85488ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": [
+                    "12Sse5UeBLLKKRVmSgwQzNehtFPbBdn4n8"
+                ]
+            }
+        },
+        {
+            "value": 0.0009,
+            "n": 1,
+            "scriptPubKey": {
+                "asm": "OP_DUP OP_HASH160 78af7d849c3c4767584502bd22ddf2b642c2eb20 OP_EQUALVERIFY OP_CHECKSIG",
+                "hex": "76a91478af7d849c3c4767584502bd22ddf2b642c2eb2088ac",
+                "reqSigs": 1,
+                "type": "pubkeyhash",
+                "addresses": [
+                    "1C18KJPUfAmsaqTUiJ4VujzMz37MM3W2AJ"
+                ]
+            }
+        }
+    ],
+    "blockhash": "000000000000000021a5dfd8763c64498c1087a07b2551d4d1b6362f3a5f1133",
+    "confirmations": 12601,
+    "time": 1402538244,
+    "blocktime": 1402538244
+}
 EOT
                 ),
             ];
