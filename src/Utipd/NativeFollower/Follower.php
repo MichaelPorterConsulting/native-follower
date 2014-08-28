@@ -313,12 +313,15 @@ class Follower
     protected function formatDecodedRawTransaction($decoded_tx, $with_inputs) {
         $info = ['txid' => $decoded_tx->txid, 'inputs' => [], 'outputs' => []];
         foreach ($decoded_tx->vout as $vout) {
-            $addresses = $vout->scriptPubKey->addresses;
-            $info['outputs'][] = [
-                // this needs to be in satoshis
-                'amount' => round($vout->value * 100000000),
-                'address' => $addresses[0],
-            ];
+            $addresses = (isset($vout->scriptPubKey) AND isset($vout->scriptPubKey->addresses)) ? $vout->scriptPubKey->addresses : [];
+            // build outputs
+            if ($addresses) {
+                $info['outputs'][] = [
+                    // this needs to be in satoshis
+                    'amount' => round($vout->value * 100000000),
+                    'address' => $addresses[0],
+                ];
+            }
 
             // build inputs (if needed)
             if ($with_inputs) {
